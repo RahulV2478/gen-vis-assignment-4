@@ -246,7 +246,6 @@ class DiffusionModel(nn.Module):
         self.time_projs = nn.ModuleList()
 
         in_ch = bottleneck_channels
-        time_dim_out = hidden_dims[0]
 
         for out_ch in decoder_dims:
             # Transposed conv for upsampling
