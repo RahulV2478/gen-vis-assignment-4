@@ -26,7 +26,7 @@ class DiffusionProcess:
         self,
         image_size,
         channels,
-        hidden_dims=[32, 64, 128],
+        hidden_dims=[32, 64],
         beta_start=1e-4,
         beta_end=0.02,
         noise_steps=1000,
@@ -85,7 +85,6 @@ class DiffusionProcess:
         t = t.to(self.device).long()
 
         # Gather the correct alpha_cumprod for each sample
-        # shapes: (batch,) -> (batch, 1, 1, 1)
         sqrt_alpha_hat = self.sqrt_alpha_cumprod[t].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha_hat = self.sqrt_one_minus_alpha_cumprod[t].view(-1, 1, 1, 1)
 
@@ -184,7 +183,7 @@ class DiffusionProcess:
 
 
 class DiffusionModel(nn.Module):
-    def __init__(self, image_size, channles=None, channels=None, hidden_dims=[32, 64, 128]):
+    def __init__(self, image_size, channles=None, channels=None, hidden_dims=[32, 64]):
         """
         Initialize the diffusion model (U-Net style).
         NOTE: We accept `channles` to match the typo in the provided check function.
@@ -233,13 +232,12 @@ class DiffusionModel(nn.Module):
             in_ch = out_ch
 
         # === Bottleneck ===
-        bottleneck_channels = hidden_dims[-1] * 2
+        bottleneck_channels = hidden_dims[-1] * 2   # 64 -> 128
         self.bottleneck = DoubleConv(hidden_dims[-1], bottleneck_channels)
 
         # === Decoder (upsampling path) ===
-        # We only need as many decoder stages as downsampling steps:
-        # for hidden_dims=[32,64,128], we have 2 downs -> 2 ups.
-        decoder_dims = list(reversed(hidden_dims[:-1]))  # e.g. [64, 32]
+        # For hidden_dims=[32, 64], we have 1 downsample -> 1 upsample
+        decoder_dims = list(reversed(hidden_dims[:-1]))  # [32]
 
         self.up_trans = nn.ModuleList()
         self.up_blocks = nn.ModuleList()
@@ -252,7 +250,7 @@ class DiffusionModel(nn.Module):
             self.up_trans.append(
                 nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2)
             )
-            # After upsample, we concat with skip of same channels -> 2 * out_ch
+            # After upsample, we concat with skip of same channels -> 2 * out_ch (32+32=64)
             self.up_blocks.append(DoubleConv(out_ch * 2, out_ch))
 
             # Time projection for this decoder level
@@ -289,18 +287,18 @@ class DiffusionModel(nn.Module):
         for i, down_block in enumerate(self.down_blocks):
             out = down_block(out)
             if i != len(self.down_blocks) - 1:
-                skips.append(out)
-                out = self.downsamples[i](out)
+                skips.append(out)                # only first level for [32,64]
+                out = self.downsamples[i](out)   # downsample 28->14
 
-        # 4. Bottleneck
-        out = self.bottleneck(out)
+        # 4. Bottleneck (operates at 14x14)
+        out = self.bottleneck(out)  # 128 channels, 14x14
 
         # 5. Decoder with time injection + skip connections
         for i, up in enumerate(self.up_trans):
-            out = up(out)
+            out = up(out)  # upsample 14->28, channels 32
 
             # Retrieve corresponding skip (reverse order)
-            skip = skips[-(i + 1)]
+            skip = skips[-(i + 1)]  # 32 channels @ 28x28
 
             # Inject time information by addition
             time_feat = self.time_projs[i](t_embed)  # (B, C_out)
@@ -308,9 +306,9 @@ class DiffusionModel(nn.Module):
             out = out + time_feat
 
             # Concatenate skip and pass through conv block
-            out = torch.cat([out, skip], dim=1)
-            out = self.up_blocks[i](out)
+            out = torch.cat([out, skip], dim=1)  # 32 + 32 = 64 channels
+            out = self.up_blocks[i](out)         # -> 32 channels
 
-        # 6. Final output conv
+        # 6. Final output conv: 32 -> input channels
         out = self.final_conv(out)
         return out
