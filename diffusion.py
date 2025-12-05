@@ -206,7 +206,7 @@ class DiffusionModel(nn.Module):
         self.hidden_dims = hidden_dims
 
         # === Time embedding ===
-        # Use a single embedding layer for timesteps, then an MLP
+        # One embedding layer -> MLP
         self.max_time = 1000  # matches the assignment's noise_steps
         time_dim = hidden_dims[0]
 
@@ -237,19 +237,23 @@ class DiffusionModel(nn.Module):
         self.bottleneck = DoubleConv(hidden_dims[-1], bottleneck_channels)
 
         # === Decoder (upsampling path) ===
+        # We only need as many decoder stages as downsampling steps:
+        # for hidden_dims=[32,64,128], we have 2 downs -> 2 ups.
+        decoder_dims = list(reversed(hidden_dims[:-1]))  # e.g. [64, 32]
+
         self.up_trans = nn.ModuleList()
         self.up_blocks = nn.ModuleList()
         self.time_projs = nn.ModuleList()
 
-        decoder_dims = list(reversed(hidden_dims))
         in_ch = bottleneck_channels
+        time_dim_out = hidden_dims[0]
 
         for out_ch in decoder_dims:
             # Transposed conv for upsampling
             self.up_trans.append(
                 nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2)
             )
-            # After upsample, we concat skip connection -> channels double
+            # After upsample, we concat with skip of same channels -> 2 * out_ch
             self.up_blocks.append(DoubleConv(out_ch * 2, out_ch))
 
             # Time projection for this decoder level
@@ -273,7 +277,7 @@ class DiffusionModel(nn.Module):
         if t.dim() == 0:
             t = t.unsqueeze(0)
         t = t.long()
-        t = t.clamp(max=self.max_time - 1)  # safety, in case
+        t = t.clamp(max=self.max_time - 1)  # safety
         t_embed = self.time_embed(t)        # (B, time_dim)
         t_embed = self.time_mlp(t_embed)    # (B, time_dim)
 
