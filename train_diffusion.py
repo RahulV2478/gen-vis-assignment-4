@@ -11,7 +11,7 @@ def get_mnist_dataloader(batch_size=128, image_size=28):
     transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.ToTensor(),
-        # Map pixels from [0,1] -> [-1,1] for nicer training
+        # Map pixels from [0,1] -> [-1,1]
         transforms.Normalize((0.5,), (0.5,))
     ])
 
@@ -40,13 +40,13 @@ def train_diffusion(
     sample_every=1,
     num_sample_images=16,
     out_dir="outputs",
+    beta_schedule="linear",
 ):
     """
     Train the diffusion model on MNIST.
-
     Returns:
-        diffusion (DiffusionProcess): trained diffusion object
-        loss_history (list[float]): average training loss per epoch
+        diffusion (DiffusionProcess)
+        loss_history (list of float)
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -60,6 +60,9 @@ def train_diffusion(
         image_size=28,
         channels=1,
         noise_steps=noise_steps,
+        beta_start=1e-4,
+        beta_end=0.02,
+        beta_schedule=beta_schedule,
         device=device,
     )
 
@@ -69,7 +72,6 @@ def train_diffusion(
         running_loss = 0.0
 
         for x, _ in dataloader:
-            # x: (B, 1, 28, 28), already normalized to [-1,1]
             loss = diffusion.train_step(x)
             running_loss += loss
 
@@ -77,18 +79,15 @@ def train_diffusion(
         loss_history.append(avg_loss)
         print(f"[Epoch {epoch+1}/{num_epochs}] loss={avg_loss:.4f}")
 
-        # Sample images to visualize progress
         if (epoch + 1) % sample_every == 0:
             diffusion.model.eval()
             with torch.no_grad():
                 samples = diffusion.sample(num_samples=num_sample_images)
-                # samples are roughly in [-1,1], map back to [0,1]
                 samples = (samples.clamp(-1, 1) + 1) / 2.0
                 save_path = os.path.join(out_dir, f"samples_epoch_{epoch+1}.png")
                 save_image(samples, save_path, nrow=int(num_sample_images ** 0.5))
                 print(f"Saved samples to {save_path}")
 
-    # Save final model weights
     model_path = os.path.join(out_dir, "diffusion_mnist.pth")
     torch.save(diffusion.model.state_dict(), model_path)
     print(f"Saved model to {model_path}")
